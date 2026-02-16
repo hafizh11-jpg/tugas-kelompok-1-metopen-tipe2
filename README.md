@@ -299,6 +299,7 @@ python /path/to/aegis_monitor.py
 │  Status: ● LIVE          AEGIS v3.0 | 50 Features              │
 └─────────────────────────────────────────────────────────────────┘
 ```
+![Tampilan Utama](Screenshot_20260217_054209.png)
 
 ### ⌨️ Shortcut Keyboard
 
