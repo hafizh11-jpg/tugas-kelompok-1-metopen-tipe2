@@ -500,7 +500,7 @@ Distribusikan di bawah lisensi **MIT License**. Lihat `LICENSE` untuk informasi 
 
 | Platform | Link |
 |----------|------|
-| 📧 Email | support@aegis-monitor.dev |
+| 📧 Email | hafizhnezuko@gmail.com |
 | 💬 Discord | [Join Server](#) |
 | 🐛 Issues | [GitHub Issues](#) |
 | 📖 Wiki | [Documentation](#) |
