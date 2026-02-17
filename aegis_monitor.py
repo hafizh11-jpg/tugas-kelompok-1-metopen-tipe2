@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+"""
+🛡️ AEGIS SERVER SENTINEL v3.0
+Sistem Monitoring Resource Server Berbasis CLI dengan Notifikasi Real-Time
+Cross-Platform: Linux, macOS, Windows
+50 Fitur Lengkap
+"""
+
 import psutil
 import time
 import os
@@ -7,6 +15,7 @@ import subprocess
 import json
 import hashlib
 import tempfile
+import sys
 from datetime import datetime, timedelta
 from rich.console import Console
 from rich.layout import Layout
@@ -54,14 +63,41 @@ class AegisMonitorV3:
         self.prev_proc_count = None
         self.zombie_alert = False
         
-        # Export Directory
-        self.export_dir = "aegis_exports"
+        # Export Directory (Cross-Platform)
+        if platform.system() == 'Windows':
+            self.export_dir = os.path.join(os.environ.get('USERPROFILE', '.'), 'aegis_exports')
+        else:
+            self.export_dir = os.path.join(os.path.expanduser('~'), 'aegis_exports')
+        
         os.makedirs(self.export_dir, exist_ok=True)
         
         # Background Tasks
         self.task_queue = queue.Queue()
         self.background_results = {}
         
+    def _get_os_type(self):
+        """Detect OS Type"""
+        os_name = platform.system().lower()
+        if os_name == 'windows':
+            return 'windows'
+        elif os_name == 'darwin':
+            return 'macos'
+        else:
+            return 'linux'
+    
+    def _is_admin(self):
+        """Check if running as admin/root (Cross-Platform)"""
+        os_type = self._get_os_type()
+        
+        try:
+            if os_type == 'windows':
+                import ctypes
+                return ctypes.windll.shell32.IsUserAnAdmin() != 0
+            else:
+                return os.geteuid() == 0
+        except:
+            return False
+    
     def get_all_system_data(self):
         """Mengumpulkan data untuk 50 Fitur"""
         
@@ -134,7 +170,6 @@ class AegisMonitorV3:
         
         # 14. Memory Pages In/Out
         try:
-            vm_stats = psutil.virtual_memory()
             self.data['mem_pages_in'] = "N/A"
             self.data['mem_pages_out'] = "N/A"
         except:
@@ -283,12 +318,14 @@ class AegisMonitorV3:
         
         # 35. Zombie Processes
         zombies = []
-        for p in psutil.process_iter(['status', 'pid', 'name']):
-            try:
-                if p.info['status'] == psutil.STATUS_ZOMBIE:
-                    zombies.append({'pid': p.info['pid'], 'name': p.info['name']})
-            except:
-                pass
+        os_type = self._get_os_type()
+        if os_type in ['linux', 'macos']:
+            for p in psutil.process_iter(['status', 'pid', 'name']):
+                try:
+                    if p.info['status'] == psutil.STATUS_ZOMBIE:
+                        zombies.append({'pid': p.info['pid'], 'name': p.info['name']})
+                except:
+                    pass
         self.data['zombie_processes'] = zombies
         self.data['zombie_count'] = len(zombies)
         
@@ -405,7 +442,7 @@ class AegisMonitorV3:
         self._update_history()
     
     def _get_cpu_temp(self):
-        """Get CPU Temperature"""
+        """Get CPU Temperature (Cross-Platform)"""
         try:
             temps = psutil.sensors_temperatures()
             if temps:
@@ -414,9 +451,9 @@ class AegisMonitorV3:
                         if 'cpu' in name.lower() or 'core' in entry.label.lower():
                             return f"{entry.current:.1f}°C"
                 return f"{list(temps.values())[0][0].current:.1f}°C"
-            return "N/A"
+            return "N/A (No Sensor)"
         except:
-            return "N/A"
+            return "N/A (Unsupported)"
     
     def _calc_memory_pressure(self, mem):
         """Calculate Memory Pressure Score"""
@@ -440,55 +477,106 @@ class AegisMonitorV3:
         return procs
     
     def _get_fd_usage(self):
-        """Get File Descriptor Usage (Linux)"""
+        """Get File Descriptor Usage (Cross-Platform)"""
+        os_type = self._get_os_type()
+        
         try:
-            fd_count = len(os.listdir('/proc/self/fd'))
-            fd_limit = psutil.Process().rlimit(psutil.RLIMIT_NOFILE)[0]
-            return f"{fd_count}/{fd_limit}"
+            if os_type == 'linux':
+                fd_count = len(os.listdir('/proc/self/fd'))
+                fd_limit = psutil.Process().rlimit(psutil.RLIMIT_NOFILE)[0]
+                return f"{fd_count}/{fd_limit}"
+            elif os_type == 'macos':
+                fd_count = psutil.Process().num_fds()
+                return f"{fd_count}/N/A"
+            else:  # Windows
+                fd_count = psutil.Process().num_handles()
+                return f"{fd_count}/N/A"
         except:
             return "N/A"
     
     def _get_dns_servers(self):
-        """Get DNS Servers"""
+        """Get DNS Servers (Cross-Platform)"""
+        os_type = self._get_os_type()
+        
         try:
-            with open('/etc/resolv.conf', 'r') as f:
-                dns = [line.split()[1] for line in f if line.startswith('nameserver')]
-                return ', '.join(dns) if dns else "N/A"
+            if os_type == 'windows':
+                # Windows: Use ipconfig
+                result = subprocess.run(['ipconfig', '/all'], capture_output=True, text=True, timeout=5)
+                dns = []
+                for line in result.stdout.split('\n'):
+                    if 'DNS Servers' in line or 'DNS' in line:
+                        parts = line.split(':')
+                        if len(parts) > 1:
+                            dns.append(parts[1].strip())
+                return ', '.join(dns[:3]) if dns else "N/A"
+            
+            elif os_type == 'macos':
+                # macOS: Use scutil
+                result = subprocess.run(['scutil', '--dns'], capture_output=True, text=True, timeout=5)
+                dns = []
+                for line in result.stdout.split('\n'):
+                    if 'nameserver' in line:
+                        dns.append(line.split()[-1])
+                return ', '.join(dns[:3]) if dns else "N/A"
+            
+            else:
+                # Linux: Read resolv.conf
+                with open('/etc/resolv.conf', 'r') as f:
+                    dns = [line.split()[1] for line in f if line.startswith('nameserver')]
+                    return ', '.join(dns) if dns else "N/A"
         except:
             return "N/A"
     
     def _check_network_latency(self):
-        """Check Network Latency"""
+        """Check Network Latency (Cross-Platform)"""
+        os_type = self._get_os_type()
+        
         try:
-            result = subprocess.run(['ping', '-c', '1', '8.8.8.8'], 
-                                  capture_output=True, text=True, timeout=3)
-            if result.returncode == 0:
-                time_line = [line for line in result.stdout.split('\n') if 'time=' in line]
-                if time_line:
-                    time_val = time_line[0].split('time=')[1].split(' ')[0]
-                    return f"{time_val} ms"
+            if os_type == 'windows':
+                # Windows ping
+                result = subprocess.run(['ping', '-n', '1', '8.8.8.8'], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    for line in result.stdout.split('\n'):
+                        if 'ms' in line and 'Average' in line:
+                            time_val = line.split('Average =')[1].split('ms')[0].strip()
+                            return f"{time_val} ms"
+            else:
+                # Linux/macOS ping
+                result = subprocess.run(['ping', '-c', '1', '8.8.8.8'], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    time_line = [line for line in result.stdout.split('\n') if 'time=' in line]
+                    if time_line:
+                        time_val = time_line[0].split('time=')[1].split(' ')[0]
+                        return f"{time_val} ms"
             return "N/A"
         except:
             return "N/A"
     
     def _check_security_level(self):
-        """Basic Security Level Check"""
+        """Basic Security Level Check (Cross-Platform)"""
         score = 0
         checks = []
+        os_type = self._get_os_type()
         
-        # Check if running as root
-        if os.geteuid() == 0:
-            checks.append("⚠️ Running as root")
+        # Check if running as admin/root
+        if self._is_admin():
+            checks.append("⚠️ Running as admin/root")
         else:
             score += 20
-            checks.append("✓ Not running as root")
+            checks.append("✓ Not running as admin/root")
         
-        # Check for zombie processes
-        if self.data.get('zombie_count', 0) > 0:
-            checks.append(f"⚠️ {self.data['zombie_count']} zombie processes")
+        # Check for zombie processes (Linux/macOS only)
+        if os_type in ['linux', 'macos']:
+            if self.data.get('zombie_count', 0) > 0:
+                checks.append(f"⚠️ {self.data['zombie_count']} zombie processes")
+            else:
+                score += 20
+                checks.append("✓ No zombie processes")
         else:
             score += 20
-            checks.append("✓ No zombie processes")
+            checks.append("✓ N/A (Windows)")
         
         # Check open connections
         if self.data.get('net_connections', 0) > 1000:
@@ -504,32 +592,44 @@ class AegisMonitorV3:
             score += 20
             checks.append("✓ Normal user count")
         
-        # Check system updates (basic)
+        # System check
         score += 20
         checks.append("✓ System check passed")
         
         level = "HIGH" if score >= 80 else "MEDIUM" if score >= 50 else "LOW"
         return {'level': level, 'score': score, 'checks': checks}
     
-    def _get_recent_files(self, directory='/tmp', minutes=5):
-        """Get Recently Modified Files"""
+    def _get_recent_files(self, directory=None, minutes=5):
+        """Get Recently Modified Files (Cross-Platform)"""
+        os_type = self._get_os_type()
+        
+        # Set default directory based on OS
+        if directory is None:
+            if os_type == 'windows':
+                directory = os.environ.get('TEMP', 'C:\\Temp')
+            elif os_type == 'macos':
+                directory = '/tmp'
+            else:
+                directory = '/tmp'
+        
         recent = []
         try:
             cutoff = time.time() - (minutes * 60)
-            for root, dirs, files in os.walk(directory):
-                for file in files[:10]:  # Limit to 10 files
-                    filepath = os.path.join(root, file)
-                    try:
-                        mtime = os.path.getmtime(filepath)
-                        if mtime > cutoff:
-                            recent.append({
-                                'path': filepath,
-                                'mtime': datetime.fromtimestamp(mtime).strftime('%H:%M:%S')
-                            })
-                    except:
-                        pass
-                if len(recent) >= 5:
-                    break
+            if os.path.exists(directory):
+                for root, dirs, files in os.walk(directory):
+                    for file in files[:10]:
+                        filepath = os.path.join(root, file)
+                        try:
+                            mtime = os.path.getmtime(filepath)
+                            if mtime > cutoff:
+                                recent.append({
+                                    'path': filepath,
+                                    'mtime': datetime.fromtimestamp(mtime).strftime('%H:%M:%S')
+                                })
+                        except:
+                            pass
+                    if len(recent) >= 5:
+                        break
         except:
             pass
         return recent[:5]
@@ -577,7 +677,7 @@ class AegisMonitorV3:
         elif self.data['disk_percent'] > 80: score -= 10
         
         # Temperature Impact
-        if self.data['cpu_temp'] != "N/A":
+        if self.data['cpu_temp'] != "N/A (Unsupported)" and self.data['cpu_temp'] != "N/A (No Sensor)":
             try:
                 temp_val = float(self.data['cpu_temp'].replace('°C', ''))
                 if temp_val > 85: score -= 15
@@ -615,7 +715,7 @@ class AegisMonitorV3:
         elif self.data['disk_percent'] > self.thresholds['disk_warn']:
             alerts.append(f"🟡 WARNING: Disk at {self.data['disk_percent']}%")
         
-        if self.data['cpu_temp'] != "N/A":
+        if self.data['cpu_temp'] != "N/A (Unsupported)" and self.data['cpu_temp'] != "N/A (No Sensor)":
             try:
                 temp_val = float(self.data['cpu_temp'].replace('°C', ''))
                 if temp_val > self.thresholds['temp_crit']:
@@ -721,7 +821,7 @@ class AegisMonitorV3:
                 'alerts': self.alert_history[-20:],
                 'history': self.data_history
             }
-            with open(filename, 'w') as f:
+            with open(filename, 'w', encoding='utf-8') as f:
                 json.dump(report, f, indent=2, default=str)
             console.print(f"[green]✓ Report exported to {filename}[/green]")
         except Exception as e:
@@ -732,7 +832,7 @@ class AegisMonitorV3:
         self.export_count += 1
         filename = f"{self.export_dir}/aegis_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         try:
-            with open(filename, 'w') as f:
+            with open(filename, 'w', encoding='utf-8') as f:
                 f.write("Metric,Value\n")
                 for key, value in self.data.items():
                     f.write(f"{key},{value}\n")
@@ -745,7 +845,7 @@ class AegisMonitorV3:
         self.screenshot_count += 1
         filename = f"{self.export_dir}/aegis_snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         try:
-            with open(filename, 'w') as f:
+            with open(filename, 'w', encoding='utf-8') as f:
                 f.write("=" * 80 + "\n")
                 f.write("AEGIS SERVER SENTINEL v3.0 - SYSTEM SNAPSHOT\n")
                 f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -800,7 +900,7 @@ class AegisMonitorV3:
         content.append(f"Frequency:  {self.data['cpu_freq_current']} MHz (Max: {self.data['cpu_freq_max']})\n", style="dim")
         
         # Temperature
-        temp_style = "red" if self.data['cpu_temp'] != "N/A" and float(self.data['cpu_temp'].replace('°C','')) > 70 else "green"
+        temp_style = "red" if self.data['cpu_temp'] != "N/A (Unsupported)" and self.data['cpu_temp'] != "N/A (No Sensor)" and float(self.data['cpu_temp'].replace('°C','')) > 70 else "green"
         content.append(f"Temperature: {self.data['cpu_temp']}\n", style=temp_style)
         
         # Cores
@@ -1152,7 +1252,7 @@ class AegisMonitorV3:
     
     def show_help(self):
         """Show Help Menu"""
-        help_text = """
+        help_text = f"""
 [bold cyan]🛡️  AEGIS SERVER SENTINEL v3.0 - HELP[/bold cyan]
 
 [bold]KEYBOARD SHORTCUTS:[/bold]
@@ -1177,10 +1277,13 @@ class AegisMonitorV3:
   [red]0-59[/red]   - Critical
 
 [bold]EXPORT DIRECTORY:[/bold]
-  All exports saved to: [cyan]{}/[/cyan]
+  All exports saved to: [cyan]{self.export_dir}/[/cyan]
+
+[bold]CROSS-PLATFORM:[/bold]
+  ✅ Linux | ✅ macOS | ✅ Windows
 
 Press any key to return...
-        """.format(self.export_dir)
+        """
         
         console.print(Panel(help_text, title="Help", border_style="cyan"))
         time.sleep(3)
@@ -1190,8 +1293,9 @@ Press any key to return...
         layout = self.make_layout()
         
         console.print("\n[bold cyan]🛡️  AEGIS SERVER SENTINEL v3.0 Starting...[/bold cyan]\n")
-        console.print("[dim]Press Ctrl+C to exit | Press keys for actions[/dim]\n")
-        console.print("[bold]50 FEATURES ACTIVE[/bold] | Export Dir: [cyan]{}/[/cyan]\n".format(self.export_dir))
+        console.print(f"[dim]Press Ctrl+C to exit | Press keys for actions[/dim]\n")
+        console.print(f"[bold]50 FEATURES ACTIVE[/bold] | Export Dir: [cyan]{self.export_dir}/[/cyan]\n")
+        console.print(f"[bold]CROSS-PLATFORM:[/bold] ✅ {platform.system()} | Python {platform.python_version()}\n")
         time.sleep(1)
         
         try:
@@ -1223,14 +1327,23 @@ Press any key to return...
             console.print(f"  Final Score:    {self.data['health_score']}%\n")
             
             # Ask for final export
-            if console.input("[yellow]Export final report? (y/n):[/yellow] ").lower() == 'y':
-                self._export_full_report()
-                self._export_csv_report()
+            try:
+                if console.input("[yellow]Export final report? (y/n):[/yellow] ").lower() == 'y':
+                    self._export_full_report()
+                    self._export_csv_report()
+            except:
+                pass
 
 
-if __name__ == "__main__":
+def main():
+    """Main Entry Point"""
     try:
         app = AegisMonitorV3()
         app.run()
     except Exception as e:
         console.print(f"[bold red]Error: {e}[/bold red]")
+        console.print("[dim]Make sure you have installed: pip install psutil rich[/dim]")
+
+
+if __name__ == "__main__":
+    main()
